@@ -17,7 +17,6 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
-#include <linux/seqlock.h>
 
 #include <asm/barrier.h>
 
@@ -172,11 +171,8 @@ static bool increase_address_space(struct protection_domain *domain,
 
 	*pte = PM_LEVEL_PDE(domain->iop.mode, iommu_virt_to_phys(domain->iop.root));
 
-	write_seqcount_begin(&domain->iop.seqcount);
 	domain->iop.root  = pte;
 	domain->iop.mode += 1;
-	write_seqcount_end(&domain->iop.seqcount);
-
 	amd_iommu_update_and_flush_device_table(domain);
 	amd_iommu_domain_flush_complete(domain);
 
@@ -203,7 +199,6 @@ static u64 *alloc_pte(struct protection_domain *domain,
 		      gfp_t gfp,
 		      bool *updated)
 {
-	unsigned int seqcount;
 	int level, end_lvl;
 	u64 *pte, *page;
 
@@ -219,14 +214,8 @@ static u64 *alloc_pte(struct protection_domain *domain,
 	}
 
 
-	do {
-		seqcount = read_seqcount_begin(&domain->iop.seqcount);
-
-		level   = domain->iop.mode - 1;
-		pte     = &domain->iop.root[PM_LEVEL_INDEX(level, address)];
-	} while (read_seqcount_retry(&domain->iop.seqcount, seqcount));
-
-
+	level   = domain->iop.mode - 1;
+	pte     = &domain->iop.root[PM_LEVEL_INDEX(level, address)];
 	address = PAGE_SIZE_ALIGN(address, page_size);
 	end_lvl = PAGE_SIZE_LEVEL(page_size);
 
@@ -303,7 +292,6 @@ static u64 *fetch_pte(struct amd_io_pgtable *pgtable,
 		      unsigned long *page_size)
 {
 	int level;
-	unsigned int seqcount;
 	u64 *pte;
 
 	*page_size = 0;
@@ -311,12 +299,8 @@ static u64 *fetch_pte(struct amd_io_pgtable *pgtable,
 	if (address > PM_LEVEL_SIZE(pgtable->mode))
 		return NULL;
 
-	do {
-		seqcount = read_seqcount_begin(&pgtable->seqcount);
-		level	   =  pgtable->mode - 1;
-		pte	   = &pgtable->root[PM_LEVEL_INDEX(level, address)];
-	} while (read_seqcount_retry(&pgtable->seqcount, seqcount));
-
+	level	   =  pgtable->mode - 1;
+	pte	   = &pgtable->root[PM_LEVEL_INDEX(level, address)];
 	*page_size =  PTE_LEVEL_PAGE_SIZE(level);
 
 	while (level > 0) {
@@ -539,8 +523,6 @@ static struct io_pgtable *v1_alloc_pgtable(struct io_pgtable_cfg *cfg, void *coo
 	cfg->ias            = IOMMU_IN_ADDR_BIT_SIZE,
 	cfg->oas            = IOMMU_OUT_ADDR_BIT_SIZE,
 	cfg->tlb            = &v1_flush_ops;
-
-	seqcount_init(&pgtable->seqcount);
 
 	pgtable->iop.ops.map_pages    = iommu_v1_map_pages;
 	pgtable->iop.ops.unmap_pages  = iommu_v1_unmap_pages;

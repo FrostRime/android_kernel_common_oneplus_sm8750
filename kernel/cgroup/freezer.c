@@ -179,7 +179,7 @@ static void cgroup_freeze_task(struct task_struct *task, bool freeze)
 /*
  * Freeze or unfreeze all tasks in the given cgroup.
  */
-static void cgroup_do_freeze(struct cgroup *cgrp, bool freeze, u64 ts_nsec)
+static void cgroup_do_freeze(struct cgroup *cgrp, bool freeze)
 {
 	struct css_task_iter it;
 	struct task_struct *task;
@@ -187,16 +187,10 @@ static void cgroup_do_freeze(struct cgroup *cgrp, bool freeze, u64 ts_nsec)
 	lockdep_assert_held(&cgroup_mutex);
 
 	spin_lock_irq(&css_set_lock);
-	write_seqcount_begin(&cgrp->kmi_ext_info->freezer.freeze_seq);
-	if (freeze) {
+	if (freeze)
 		set_bit(CGRP_FREEZE, &cgrp->flags);
-		cgrp->kmi_ext_info->freezer.freeze_start_nsec = ts_nsec;
-	} else {
+	else
 		clear_bit(CGRP_FREEZE, &cgrp->flags);
-		cgrp->kmi_ext_info->freezer.frozen_nsec += (ts_nsec -
-			cgrp->kmi_ext_info->freezer.freeze_start_nsec);
-	}
-	write_seqcount_end(&cgrp->kmi_ext_info->freezer.freeze_seq);
 	spin_unlock_irq(&css_set_lock);
 
 	if (freeze)
@@ -273,7 +267,6 @@ void cgroup_freeze(struct cgroup *cgrp, bool freeze)
 	struct cgroup_subsys_state *css;
 	struct cgroup *dsct;
 	bool applied = false;
-	u64 ts_nsec;
 
 	lockdep_assert_held(&cgroup_mutex);
 
@@ -284,7 +277,6 @@ void cgroup_freeze(struct cgroup *cgrp, bool freeze)
 		return;
 
 	cgrp->freezer.freeze = freeze;
-	ts_nsec = ktime_get_ns();
 
 	/*
 	 * Propagate changes downwards the cgroup tree.
@@ -316,7 +308,7 @@ void cgroup_freeze(struct cgroup *cgrp, bool freeze)
 		/*
 		 * Do change actual state: freeze or unfreeze.
 		 */
-		cgroup_do_freeze(dsct, freeze, ts_nsec);
+		cgroup_do_freeze(dsct, freeze);
 		applied = true;
 	}
 

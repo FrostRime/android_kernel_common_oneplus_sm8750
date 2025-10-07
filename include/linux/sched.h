@@ -66,14 +66,12 @@ struct root_domain;
 struct rq;
 struct sched_attr;
 struct sched_param;
-struct sched_dl_entity;
 struct seq_file;
 struct sighand_struct;
 struct signal_struct;
 struct task_delay_info;
 struct task_dma_buf_info;
 struct task_group;
-struct task_struct;
 struct user_event_mm;
 
 #include <linux/sched/ext.h>
@@ -510,7 +508,7 @@ struct sched_statistics {
 	u64				block_max;
 	s64				sum_block_runtime;
 
-	s64				exec_max;
+	u64				exec_max;
 	u64				slice_max;
 
 	u64				nr_migrations_cold;
@@ -535,9 +533,9 @@ struct sched_statistics {
 #endif /* CONFIG_SCHEDSTATS */
 } ____cacheline_aligned;
 
-struct sched_entity_ext {
-	unsigned char			custom_slice;
-};
+#ifdef CONFIG_SCHED_BORE
+struct sched_bore_stats;
+#endif // CONFIG_SCHED_BORE
 
 struct sched_entity {
 	/* For load-balancing: */
@@ -547,10 +545,7 @@ struct sched_entity {
 	u64				min_vruntime;
 
 	struct list_head		group_node;
-	unsigned char			on_rq;
-	unsigned char			sched_delayed;
-	unsigned char			rel_deadline;
-					/* hole */
+	unsigned int			on_rq;
 
 	u64				exec_start;
 	u64				sum_exec_runtime;
@@ -581,8 +576,11 @@ struct sched_entity {
 	 */
 	struct sched_avg		avg;
 #endif
-
-	ANDROID_KABI_USE(1, struct sched_entity_ext ext);
+#ifdef CONFIG_SCHED_BORE
+	ANDROID_KABI_USE(1, struct sched_bore_stats *bore_stats);
+#else // !CONFIG_SCHED_BORE
+	ANDROID_KABI_RESERVE(1);
+#endif // CONFIG_SCHED_BORE
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
@@ -610,9 +608,6 @@ struct sched_rt_entity {
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
 } __randomize_layout;
-
-typedef bool (*dl_server_has_tasks_f)(struct sched_dl_entity *);
-typedef struct task_struct *(*dl_server_pick_f)(struct sched_dl_entity *);
 
 struct sched_dl_entity {
 	struct rb_node			rb_node;
@@ -656,26 +651,11 @@ struct sched_dl_entity {
 	 *
 	 * @dl_overrun tells if the task asked to be informed about runtime
 	 * overruns.
-	 *
-	 * @dl_server tells if this is a server entity.
-	 *
-	 * @dl_defer tells if this is a deferred or regular server. For
-	 * now only defer server exists.
-	 *
-	 * @dl_defer_armed tells if the deferrable server is waiting
-	 * for the replenishment timer to activate it.
-	 *
-	 * @dl_defer_running tells if the deferrable server is actually
-	 * running, skipping the defer phase.
 	 */
 	unsigned int			dl_throttled      : 1;
 	unsigned int			dl_yielded        : 1;
 	unsigned int			dl_non_contending : 1;
 	unsigned int			dl_overrun	  : 1;
-	unsigned int			dl_server         : 1;
-	unsigned int			dl_defer	  : 1;
-	unsigned int			dl_defer_armed	  : 1;
-	unsigned int			dl_defer_running  : 1;
 
 	/*
 	 * Bandwidth enforcement timer. Each -deadline task has its
@@ -690,20 +670,7 @@ struct sched_dl_entity {
 	 * timer is needed to decrease the active utilization at the correct
 	 * time.
 	 */
-	struct hrtimer			inactive_timer;
-
-	/*
-	 * Bits for DL-server functionality. Also see the comment near
-	 * dl_server_update().
-	 *
-	 * @rq the runqueue this server is for
-	 *
-	 * @server_has_tasks() returns true if @server_pick return a
-	 * runnable task.
-	 */
-	struct rq			*rq;
-	dl_server_has_tasks_f		server_has_tasks;
-	dl_server_pick_f		server_pick_task;
+	struct hrtimer inactive_timer;
 
 #ifdef CONFIG_RT_MUTEXES
 	/*
@@ -844,7 +811,6 @@ struct task_struct {
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
-	struct sched_dl_entity		*dl_server;
 	const struct sched_class	*sched_class;
 
 #ifdef CONFIG_SCHED_CORE

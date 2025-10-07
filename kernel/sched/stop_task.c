@@ -57,17 +57,10 @@ enqueue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 	add_nr_running(rq, 1);
 }
 
-static bool
-__dequeue_task_stop(struct rq *rq, struct task_struct *p, int flags)
-{
-	sub_nr_running(rq, 1);
-	return true;
-}
-
 static void
 dequeue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 {
-	__dequeue_task_stop(rq, p, flags);
+	sub_nr_running(rq, 1);
 }
 
 static void yield_task_stop(struct rq *rq)
@@ -77,7 +70,18 @@ static void yield_task_stop(struct rq *rq)
 
 static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 {
-	update_curr_common(rq);
+	struct task_struct *curr = rq->curr;
+	u64 now, delta_exec;
+
+	now = rq_clock_task(rq);
+	delta_exec = now - curr->se.exec_start;
+	if (unlikely((s64)delta_exec < 0))
+		delta_exec = 0;
+
+	schedstat_set(curr->stats.exec_max,
+		      max(curr->stats.exec_max, delta_exec));
+
+	update_current_exec_runtime(curr, now, delta_exec);
 }
 
 /*
@@ -113,9 +117,6 @@ static void update_curr_stop(struct rq *rq)
 DEFINE_SCHED_CLASS(stop) = {
 
 	.enqueue_task		= enqueue_task_stop,
-#ifndef __GENKSYMS__
-	.__dequeue_task		= __dequeue_task_stop,
-#endif
 	.dequeue_task		= dequeue_task_stop,
 	.yield_task		= yield_task_stop,
 

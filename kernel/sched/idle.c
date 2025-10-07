@@ -407,7 +407,6 @@ static void check_preempt_curr_idle(struct rq *rq, struct task_struct *p, int fl
 static void put_prev_task_idle(struct rq *rq, struct task_struct *prev)
 {
 	scx_update_idle(rq, false);
-	dl_server_update_idle_time(rq, prev);
 }
 
 static void set_next_task_idle(struct rq *rq, struct task_struct *next, bool first)
@@ -415,7 +414,6 @@ static void set_next_task_idle(struct rq *rq, struct task_struct *next, bool fir
 	update_idle_core(rq);
 	scx_update_idle(rq, true);
 	schedstat_inc(rq->sched_goidle);
-	next->se.exec_start = rq_clock_task(rq);
 }
 
 #ifdef CONFIG_SMP
@@ -438,20 +436,13 @@ struct task_struct *pick_next_task_idle(struct rq *rq)
  * It is not legal to sleep in the idle task - print a warning
  * message if some code attempts to do it:
  */
-static bool
-__dequeue_task_idle(struct rq *rq, struct task_struct *p, int flags)
+static void
+dequeue_task_idle(struct rq *rq, struct task_struct *p, int flags)
 {
 	raw_spin_rq_unlock_irq(rq);
 	printk(KERN_ERR "bad: scheduling from the idle thread!\n");
 	dump_stack();
 	raw_spin_rq_lock_irq(rq);
-	return true;
-}
-
-static void
-dequeue_task_idle(struct rq *rq, struct task_struct *p, int flags)
-{
-	__dequeue_task_idle(rq, p, flags);
 }
 
 /*
@@ -489,9 +480,6 @@ DEFINE_SCHED_CLASS(idle) = {
 	/* no enqueue/yield_task for idle tasks */
 
 	/* dequeue is not valid, we print a debug message there: */
-#ifndef __GENKSYMS__
-	.__dequeue_task		= __dequeue_task_idle,
-#endif
 	.dequeue_task		= dequeue_task_idle,
 
 	.check_preempt_curr	= check_preempt_curr_idle,

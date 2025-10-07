@@ -991,13 +991,13 @@ static void ops_dequeue(struct task_struct *p, u64 deq_flags)
 	}
 }
 
-static bool __dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_flags)
+static void dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_flags)
 {
 	struct scx_rq *scx_rq = rq->scx;
 
 	if (!(p->scx->flags & SCX_TASK_QUEUED)) {
 		WARN_ON_ONCE(watchdog_task_watched(p));
-		return false;
+		return;
 	}
 
 	ops_dequeue(p, deq_flags);
@@ -1036,13 +1036,6 @@ static bool __dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_fla
 	sub_nr_running(rq, 1);
 
 	dispatch_dequeue(scx_rq, p);
-
-	return true;
-}
-
-static void dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_flags)
-{
-	__dequeue_task_scx(rq, p, deq_flags);
 }
 
 static void yield_task_scx(struct rq *rq)
@@ -2439,9 +2432,6 @@ static inline void scx_cgroup_unlock(void) {}
  */
 DEFINE_SCHED_CLASS(ext) = {
 	.enqueue_task		= enqueue_task_scx,
-#ifndef __GENKSYMS__
-	.__dequeue_task		= __dequeue_task_scx,
-#endif
 	.dequeue_task		= dequeue_task_scx,
 	.yield_task		= yield_task_scx,
 	.yield_to_task		= yield_to_task_scx,
