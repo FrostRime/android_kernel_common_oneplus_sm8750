@@ -71,6 +71,9 @@
 #include <linux/workqueue_api.h>
 #include <linux/android_vendor.h>
 #include <linux/android_kabi.h>
+#ifndef __GENKSYMS__
+#include <linux/delayacct.h>
+#endif
 
 #include <trace/events/power.h>
 #include <trace/events/sched.h>
@@ -849,6 +852,9 @@ static inline void se_update_runnable(struct sched_entity *se)
 
 static inline long se_runnable(struct sched_entity *se)
 {
+	if (se->ext.sched_delayed)
+		return false;
+
 	if (entity_is_task(se))
 		return !!se->on_rq;
 	else
@@ -862,6 +868,9 @@ static inline void se_update_runnable(struct sched_entity *se) {}
 
 static inline long se_runnable(struct sched_entity *se)
 {
+	if (se->ext.sched_delayed)
+		return false;
+
 	return !!se->on_rq;
 }
 #endif
@@ -2054,9 +2063,9 @@ static inline void dirty_sched_domain_sysctl(int cpu)
 
 #ifdef CONFIG_SCHED_BORE
 extern void sched_update_min_base_slice(void);
-#else // !CONFIG_SCHED_BORE
+#else /* !CONFIG_SCHED_BORE */
 extern int sched_update_scaling(void);
-#endif // CONFIG_SCHED_BORE
+#endif /* CONFIG_SCHED_BORE */
 
 static inline const struct cpumask *task_user_cpus(struct task_struct *p)
 {
@@ -2316,10 +2325,13 @@ extern const u32		sched_prio_to_wmult[40];
  *
  */
 
-#define DEQUEUE_SLEEP		0x01
+#define DEQUEUE_SLEEP		0x01 /* Matches ENQUEUE_WAKEUP */
 #define DEQUEUE_SAVE		0x02 /* Matches ENQUEUE_RESTORE */
 #define DEQUEUE_MOVE		0x04 /* Matches ENQUEUE_MOVE */
 #define DEQUEUE_NOCLOCK		0x08 /* Matches ENQUEUE_NOCLOCK */
+#define DEQUEUE_SPECIAL		0x10
+#define DEQUEUE_MIGRATING	0x100 /* Matches ENQUEUE_MIGRATING */
+#define DEQUEUE_DELAYED		0x200 /* Matches ENQUEUE_DELAYED */
 
 #define ENQUEUE_WAKEUP		0x01
 #define ENQUEUE_RESTORE		0x02
@@ -2334,6 +2346,8 @@ extern const u32		sched_prio_to_wmult[40];
 #define ENQUEUE_MIGRATED	0x00
 #endif
 #define ENQUEUE_INITIAL		0x80
+#define ENQUEUE_MIGRATING	0x100
+#define ENQUEUE_DELAYED		0x200
 
 #define ENQUEUE_WAKEUP_SYNC	0x80
 
@@ -2357,6 +2371,9 @@ struct sched_class {
 #endif
 
 	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int flags);
+#ifndef __GENKSYMS__
+	bool (*__dequeue_task) (struct rq *rq, struct task_struct *p, int flags);
+#endif
 	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int flags);
 	void (*yield_task)   (struct rq *rq);
 	bool (*yield_to_task)(struct rq *rq, struct task_struct *p);
@@ -2558,6 +2575,8 @@ extern void init_sched_fair_class(void);
 extern void set_load_weight(struct task_struct *p, bool update_load);
 extern void reweight_task(struct task_struct *p, int prio);
 extern void __setscheduler_prio(struct task_struct *p, int prio);
+extern bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags);
+extern void dequeue_task(struct rq *rq, struct task_struct *p, int flags);
 
 extern void resched_curr(struct rq *rq);
 extern void resched_cpu(int cpu);
@@ -2635,6 +2654,19 @@ static inline void sub_nr_running(struct rq *rq, unsigned count)
 	sched_update_tick_dependency(rq);
 }
 
+static inline void __block_task(struct rq *rq, struct task_struct *p)
+{
+	WRITE_ONCE(p->on_rq, 0);
+	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
+	if (p->sched_contributes_to_load)
+		rq->nr_uninterruptible++;
+
+	if (p->in_iowait) {
+		atomic_inc(&rq->nr_iowait);
+		delayacct_blkio_start();
+	}
+}
+
 extern void activate_task(struct rq *rq, struct task_struct *p, int flags);
 extern void deactivate_task(struct rq *rq, struct task_struct *p, int flags);
 
@@ -2699,9 +2731,9 @@ extern const_debug unsigned int sysctl_sched_migration_cost;
 #ifdef CONFIG_SCHED_BORE
 extern unsigned int sysctl_sched_min_base_slice;
 extern __read_mostly uint sysctl_sched_base_slice;
-#else // !CONFIG_SCHED_BORE
+#else /* !CONFIG_SCHED_BORE */
 extern unsigned int sysctl_sched_base_slice;
-#endif // CONFIG_SCHED_BORE
+#endif /* CONFIG_SCHED_BORE */
 
 #ifdef CONFIG_SCHED_DEBUG
 extern int sysctl_resched_latency_warn_ms;
