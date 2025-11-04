@@ -105,7 +105,7 @@
 #include <trace/hooks/sched.h>
 #include "internal.h"
 #include "fd.h"
-
+#include <linux/susfs_def.h>
 #ifdef CONFIG_QOS_CTRL
 #include <linux/sched/qos_ctrl.h>
 #endif
